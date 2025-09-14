@@ -310,6 +310,23 @@ OpenTelemetry를 통한 분산 추적 지원:
 
 ## 🚢 배포
 
+### CI/CD 파이프라인
+
+빌드 시 Swagger 문서 자동 생성:
+
+```bash
+# 로컬에서 Swagger 문서 생성
+make swagger
+
+# CI/CD 파이프라인 실행 (Swagger 포함)
+make ci
+
+# Docker 이미지 빌드 (Swagger 문서 포함)
+make docker-build
+```
+
+**중요**: `docs/docs.go`는 버전 관리에 포함되며, CI/CD에서 `swag init` 명령어로 재생성됩니다.
+
 ### Kubernetes 배포
 
 KEDA를 사용한 오토스케일링 설정:

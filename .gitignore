@@ -52,6 +52,8 @@ test/results/
 # Docker
 .dockerignore
 
-# Swagger docs (generated)
-docs/
+# Swagger docs (generated JSON/YAML only)
+docs/swagger.json
+docs/swagger.yaml
+# Keep docs/docs.go in version control as it's generated code
 

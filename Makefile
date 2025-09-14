@@ -91,6 +91,10 @@ mocks:
 swagger:
 	swag init -g cmd/reservation-worker/main.go -o docs/
 
-# CI pipeline
-ci: deps fmt vet lint test build-linux
+# Generate Swagger docs for CI/CD (ensure docs.go is generated)
+swagger-ci: swagger
+	@echo "Swagger documentation generated for CI/CD"
+
+# CI pipeline (with Swagger generation)
+ci: deps swagger-ci fmt vet lint test build-linux
 
