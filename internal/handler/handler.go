@@ -149,3 +149,4 @@ func (h *EventHandlerImpl) handlePaymentFailed(ctx context.Context, event *types
 
 	return nil
 }
+

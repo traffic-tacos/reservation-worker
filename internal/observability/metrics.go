@@ -90,3 +90,4 @@ const (
 func (o EventOutcome) String() string {
 	return string(o)
 }
+

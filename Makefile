@@ -88,3 +88,4 @@ mocks:
 
 # CI pipeline
 ci: deps fmt vet lint test build-linux
+

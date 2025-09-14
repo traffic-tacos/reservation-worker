@@ -84,3 +84,4 @@ func (e *Event) GetPaymentFailedPayload() (*PaymentFailedPayload, error) {
 	}
 	return payload, nil
 }
+

@@ -55,3 +55,4 @@ EXPOSE 8080
 
 # Run the binary
 ENTRYPOINT ["/reservation-worker"]
+

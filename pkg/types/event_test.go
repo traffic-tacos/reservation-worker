@@ -91,3 +91,4 @@ func TestEventType(t *testing.T) {
 	assert.NotZero(t, event.Timestamp)
 	assert.Equal(t, "trace_123", event.TraceID)
 }
+

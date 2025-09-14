@@ -76,3 +76,4 @@ func (o *Observability) Shutdown(ctx context.Context) error {
 
 	return nil
 }
+
