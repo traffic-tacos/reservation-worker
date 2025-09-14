@@ -52,3 +52,6 @@ test/results/
 # Docker
 .dockerignore
 
+# Swagger docs (generated)
+docs/
+

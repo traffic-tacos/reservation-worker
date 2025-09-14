@@ -24,6 +24,9 @@ type Config struct {
 	InventoryGRPCAddr  string `env:"INVENTORY_GRPC_ADDR,required"`
 	ReservationAPIBase string `env:"RESERVATION_API_BASE,required"`
 
+	// HTTP Server Configuration
+	HTTPPort string `env:"HTTP_PORT" envDefault:"8080"`
+
 	// Observability
 	OtelExporterOTLPEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:"http://otel-collector:4317"`
 	LogLevel                 string `env:"LOG_LEVEL" envDefault:"info"`
@@ -106,6 +109,7 @@ func GetEnvMap() map[string]string {
 		"BACKOFF_BASE_MS":             "1000",
 		"INVENTORY_GRPC_ADDR":         "inventory-svc:8080",
 		"RESERVATION_API_BASE":        "http://reservation-api:8080",
+		"HTTP_PORT":                   "8080",
 		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel-collector:4317",
 		"LOG_LEVEL":                   "info",
 	}

@@ -81,10 +81,15 @@ install-tools:
 	$(GOCMD) install github.com/cosmtrek/air@latest
 	$(GOCMD) install github.com/golangci/golangci-lint/cmd/golangci-lint@latest
 	$(GOCMD) install github.com/vektra/mockery/v2@latest
+	$(GOCMD) install github.com/swaggo/swag/cmd/swag@latest
 
 # Generate mocks
 mocks:
 	mockery --all --output ./test/mocks
+
+# Generate Swagger documentation
+swagger:
+	swag init -g cmd/reservation-worker/main.go -o docs/
 
 # CI pipeline
 ci: deps fmt vet lint test build-linux
