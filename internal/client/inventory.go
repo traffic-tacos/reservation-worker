@@ -42,19 +42,12 @@ func (c *InventoryClient) Close() error {
 }
 
 // ReleaseHold releases held seats/inventory back to available pool
-func (c *InventoryClient) ReleaseHold(ctx context.Context, req *ReleaseHoldRequest) error {
+func (c *InventoryClient) ReleaseHold(ctx context.Context, req *reservationv1.ReleaseHoldRequest) error {
 	// Set timeout for gRPC call
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 
-	grpcReq := &reservationv1.ReleaseHoldRequest{
-		EventId:       req.EventID,
-		ReservationId: req.ReservationID,
-		Quantity:      int32(req.Quantity),
-		SeatIds:       req.SeatIDs,
-	}
-
-	_, err := c.client.ReleaseHold(ctx, grpcReq)
+	_, err := c.client.ReleaseHold(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to release hold: %w", err)
 	}
@@ -63,40 +56,15 @@ func (c *InventoryClient) ReleaseHold(ctx context.Context, req *ReleaseHoldReque
 }
 
 // CommitReservation commits a reservation, marking seats as sold
-func (c *InventoryClient) CommitReservation(ctx context.Context, req *CommitReservationRequest) error {
+func (c *InventoryClient) CommitReservation(ctx context.Context, req *reservationv1.CommitReservationRequest) error {
 	// Set timeout for gRPC call
 	ctx, cancel := context.WithTimeout(ctx, 250*time.Millisecond)
 	defer cancel()
 
-	grpcReq := &reservationv1.CommitReservationRequest{
-		EventId:         req.EventID,
-		ReservationId:   req.ReservationID,
-		Quantity:        int32(req.Quantity),
-		SeatIds:         req.SeatIDs,
-		PaymentIntentId: req.PaymentIntentID,
-	}
-
-	_, err := c.client.CommitReservation(ctx, grpcReq)
+	_, err := c.client.CommitReservation(ctx, req)
 	if err != nil {
 		return fmt.Errorf("failed to commit reservation: %w", err)
 	}
 
 	return nil
-}
-
-// ReleaseHoldRequest represents a request to release held inventory
-type ReleaseHoldRequest struct {
-	EventID       string
-	ReservationID string
-	Quantity      int
-	SeatIDs       []string
-}
-
-// CommitReservationRequest represents a request to commit a reservation
-type CommitReservationRequest struct {
-	EventID         string
-	ReservationID   string
-	Quantity        int
-	SeatIDs         []string
-	PaymentIntentID string
 }

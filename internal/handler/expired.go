@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/traffic-tacos/proto-contracts/gen/go/reservation/v1"
 	"github.com/traffic-tacos/reservation-worker/internal/client"
 	"github.com/traffic-tacos/reservation-worker/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
@@ -73,11 +74,11 @@ func (h *ExpiredHandler) Handle(ctx context.Context, event *Event) error {
 	)
 
 	// Step 1: Release hold in inventory service
-	releaseReq := &client.ReleaseHoldRequest{
-		EventID:       expiredDetail.EventID,
-		ReservationID: expiredDetail.ReservationID,
-		Quantity:      expiredDetail.Quantity,
-		SeatIDs:       expiredDetail.SeatIDs,
+	releaseReq := &reservationv1.ReleaseHoldRequest{
+		EventId:       expiredDetail.EventID,
+		ReservationId: expiredDetail.ReservationID,
+		Quantity:      int32(expiredDetail.Quantity),
+		SeatIds:       expiredDetail.SeatIDs,
 	}
 
 	if err := h.inventoryClient.ReleaseHold(ctx, releaseReq); err != nil {

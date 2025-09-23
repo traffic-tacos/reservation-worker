@@ -6,6 +6,7 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
+	"strconv"
 	"sync"
 	"syscall"
 	"time"
@@ -16,6 +17,7 @@ import (
 	"github.com/traffic-tacos/reservation-worker/internal/client"
 	workerConfig "github.com/traffic-tacos/reservation-worker/internal/config"
 	"github.com/traffic-tacos/reservation-worker/internal/observability"
+	"github.com/traffic-tacos/reservation-worker/internal/server"
 	"github.com/traffic-tacos/reservation-worker/internal/worker"
 	"go.uber.org/zap"
 )
@@ -32,15 +34,23 @@ func main() {
 	}
 	defer logger.Sync()
 
+	// Initialize context for graceful shutdown
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+
+	// Load secrets from AWS Secrets Manager if configured
+	if err := cfg.MergeWithSecrets(ctx); err != nil {
+		logger.Error("Failed to load secrets from AWS Secrets Manager", zap.Error(err))
+		// Continue with default configuration
+	}
+
 	logger.Info("Starting reservation worker",
 		zap.String("queue_url", cfg.SQSQueueURL),
 		zap.Int("concurrency", cfg.WorkerConcurrency),
 		zap.Int("max_retries", cfg.MaxRetries),
+		zap.String("aws_profile", cfg.AWSProfile),
+		zap.Bool("use_secret_manager", cfg.UseSecretManager),
 	)
-
-	// Initialize context for graceful shutdown
-	ctx, cancel := context.WithCancel(context.Background())
-	defer cancel()
 
 	// Initialize OpenTelemetry tracing
 	tracingConfig := observability.TracingConfig{
@@ -67,9 +77,16 @@ func main() {
 	metrics := observability.NewMetrics()
 
 	// Initialize AWS SDK
-	awsCfg, err := config.LoadDefaultConfig(ctx,
+	awsOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(cfg.SQSRegion),
-	)
+	}
+
+	// Use AWS profile if specified
+	if cfg.AWSProfile != "" {
+		awsOpts = append(awsOpts, config.WithSharedConfigProfile(cfg.AWSProfile))
+	}
+
+	awsCfg, err := config.LoadDefaultConfig(ctx, awsOpts...)
 	if err != nil {
 		logger.Error("Failed to load AWS config", zap.Error(err))
 		os.Exit(1)
@@ -113,6 +130,22 @@ func main() {
 		startHTTPServer(cfg.ServerPort, logger)
 	}()
 
+	// Start gRPC server for debugging (grpcui support)
+	grpcPort, err := strconv.Atoi(cfg.GRPCDebugPort)
+	if err != nil {
+		logger.Error("Invalid gRPC debug port", zap.Error(err))
+		os.Exit(1)
+	}
+
+	grpcServer := server.NewGRPCServer(grpcPort, logger)
+	wg.Add(1)
+	go func() {
+		defer wg.Done()
+		if err := grpcServer.Start(ctx); err != nil {
+			logger.Error("gRPC server failed", zap.Error(err))
+		}
+	}()
+
 	// Start dispatcher
 	wg.Add(1)
 	go func() {
@@ -146,6 +179,7 @@ func main() {
 	// Stop components
 	poller.Stop()
 	dispatcher.Stop()
+	grpcServer.Stop()
 
 	// Wait for all goroutines to finish with timeout
 	done := make(chan struct{})

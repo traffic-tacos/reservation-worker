@@ -8,6 +8,12 @@ import (
 
 // Config holds all configuration for the reservation worker
 type Config struct {
+	// AWS Configuration
+	AWSProfile      string
+	AWSRegion       string
+	UseSecretManager bool
+	SecretName      string
+
 	// SQS Configuration
 	SQSQueueURL  string
 	SQSWaitTime  int
@@ -26,13 +32,20 @@ type Config struct {
 	OTELExporterEndpoint string
 	LogLevel             string
 
-	// Server Configuration (for health checks)
-	ServerPort string
+	// Server Configuration
+	ServerPort     string // HTTP server for health/metrics
+	GRPCDebugPort  string // gRPC server for debugging
 }
 
 // Load loads configuration from environment variables
 func Load() *Config {
 	return &Config{
+		// AWS Configuration
+		AWSProfile:       getEnv("AWS_PROFILE", "tacos"),
+		AWSRegion:        getEnv("AWS_REGION", "ap-northeast-2"),
+		UseSecretManager: getEnvBool("USE_SECRET_MANAGER", false),
+		SecretName:       getEnv("SECRET_NAME", "traffictacos/reservation-worker"),
+
 		// SQS Configuration
 		SQSQueueURL:  getEnv("SQS_QUEUE_URL", "https://sqs.ap-northeast-2.amazonaws.com/123/reservation-events"),
 		SQSWaitTime:  getEnvInt("SQS_WAIT_TIME", 20),
@@ -52,7 +65,8 @@ func Load() *Config {
 		LogLevel:             getEnv("LOG_LEVEL", "info"),
 
 		// Server Configuration
-		ServerPort: getEnv("SERVER_PORT", "8040"),
+		ServerPort:    getEnv("SERVER_PORT", "8040"),
+		GRPCDebugPort: getEnv("GRPC_DEBUG_PORT", "8041"),
 	}
 }
 
@@ -69,6 +83,16 @@ func getEnvInt(key string, defaultValue int) int {
 	if value := os.Getenv(key); value != "" {
 		if intValue, err := strconv.Atoi(value); err == nil {
 			return intValue
+		}
+	}
+	return defaultValue
+}
+
+// getEnvBool gets environment variable as boolean with default value
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
 		}
 	}
 	return defaultValue

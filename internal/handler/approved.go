@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/traffic-tacos/proto-contracts/gen/go/reservation/v1"
 	"github.com/traffic-tacos/reservation-worker/internal/client"
 	"github.com/traffic-tacos/reservation-worker/internal/observability"
 	"go.opentelemetry.io/otel/attribute"
@@ -94,12 +95,12 @@ func (h *ApprovedHandler) Handle(ctx context.Context, event *Event) error {
 
 	// Step 2: Commit reservation in inventory service (optional - mark seats as SOLD)
 	if approvedDetail.EventID != "" && len(approvedDetail.SeatIDs) > 0 {
-		commitReq := &client.CommitReservationRequest{
-			EventID:         approvedDetail.EventID,
-			ReservationID:   approvedDetail.ReservationID,
-			Quantity:        approvedDetail.Quantity,
-			SeatIDs:         approvedDetail.SeatIDs,
-			PaymentIntentID: approvedDetail.PaymentIntentID,
+		commitReq := &reservationv1.CommitReservationRequest{
+			EventId:         approvedDetail.EventID,
+			ReservationId:   approvedDetail.ReservationID,
+			Quantity:        int32(approvedDetail.Quantity),
+			SeatIds:         approvedDetail.SeatIDs,
+			PaymentIntentId: approvedDetail.PaymentIntentID,
 		}
 
 		if err := h.inventoryClient.CommitReservation(ctx, commitReq); err != nil {
