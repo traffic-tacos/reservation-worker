@@ -12,6 +12,7 @@ import (
 	"time"
 
 	"github.com/aws/aws-sdk-go-v2/config"
+	"github.com/aws/aws-sdk-go-v2/credentials"
 	"github.com/aws/aws-sdk-go-v2/service/sqs"
 	"github.com/prometheus/client_golang/prometheus/promhttp"
 	"github.com/traffic-tacos/reservation-worker/internal/client"
@@ -79,13 +80,21 @@ func main() {
 	// Initialize Prometheus metrics
 	metrics := observability.NewMetrics()
 
-	// Initialize AWS SDK
+	// Initialize AWS SDK with static credentials
 	awsOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(cfg.SQSRegion),
 	}
 
-	// Use AWS profile if specified
-	if cfg.AWSProfile != "" {
+	// Use static credentials from environment variables
+	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
+	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
+
+	if accessKey != "" && secretKey != "" {
+		awsOpts = append(awsOpts, config.WithCredentialsProvider(
+			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
+		))
+	} else if cfg.AWSProfile != "" {
+		// Fallback to profile if static credentials not available
 		awsOpts = append(awsOpts, config.WithSharedConfigProfile(cfg.AWSProfile))
 	}
 

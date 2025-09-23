@@ -41,7 +41,7 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		// AWS Configuration
-		AWSProfile:       getEnv("AWS_PROFILE", "tacos"),
+		AWSProfile:       getEnv("AWS_PROFILE", ""),
 		AWSRegion:        getEnv("AWS_REGION", "ap-northeast-2"),
 		UseSecretManager: getEnvBool("USE_SECRET_MANAGER", false),
 		SecretName:       getEnv("SECRET_NAME", "traffictacos/reservation-worker"),
