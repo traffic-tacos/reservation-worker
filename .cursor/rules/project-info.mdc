@@ -17,33 +17,36 @@ alwaysApply: true
 - 통신 대상: inventory-svc(gRPC), reservation-api(REST/gRPC)
 
 ## 1) 기술 스택
-- Go 1.22+, linux/arm64
-- 메시지 소비: AWS SDK v2 SQS client
-- gRPC client: inventory-svc
-- REST/gRPC client: reservation-api
+- Go 1.23+, linux/arm64
+- 메시지 소비: AWS SDK v2 SQS client (long polling 20s)
+- gRPC client: inventory-svc (proto-contracts reservationv1)
+- REST client: reservation-api
+- AWS: profile 기반 인증, Secret Manager 지원
 - 직렬화: JSON
-- 로깅: zap(JSON)
+- 로깅: zap(JSON 구조화)
 - 관측: OpenTelemetry(OTLP), Prometheus(client_golang)
-- 동시성 처리: goroutines, worker pool
-- KEDA 전제: Pod 수는 큐 backlog에 따라 자동 증가/감소.  
+- 동시성 처리: goroutines worker pool (기본 20개)
+- 재시도: exponential backoff (1s→2s→4s→8s, 최대 5회)
+- KEDA 전제: Pod 수는 큐 backlog에 따라 자동 증가/감소.
   (앱 레벨에서는 단일 인스턴스에서의 동시성 안전성만 확보)
 
 ## 2) 이벤트 페이로드 스키마
-모든 이벤트는 JSON, 최소한 아래 공통 필드를 가짐:
+EventBridge → SQS 이벤트 구조 (AWS 표준):
 {
+  "id": "evt_123",
   "type": "reservation.expired | payment.approved | payment.failed",
-  "reservation_id": "rsv_123",
-  "event_id": "evt_456",
-  "ts": "ISO8601",
-  "payload": { ... }   // 타입별 추가 필드
+  "source": "reservation-api | payment-sim-api",
+  "detail": { ... },   // 타입별 세부 내용
+  "time": "2025-01-23T10:00:00Z",
+  "trace_id": "trace_abc"
 }
 
-- reservation.expired
-  payload: { "qty": 2, "seat_ids": ["A1","A2"] }
-- payment.approved
-  payload: { "payment_intent_id":"pay_abc", "amount":120000 }
-- payment.failed
-  payload: { "payment_intent_id":"pay_def", "amount":120000 }
+- reservation.expired detail:
+  { "reservation_id": "rsv_123", "event_id": "evt_456", "qty": 2, "seat_ids": ["A1","A2"] }
+- payment.approved detail:
+  { "reservation_id": "rsv_123", "payment_intent_id": "pay_abc", "amount": 120000 }
+- payment.failed detail:
+  { "reservation_id": "rsv_123", "payment_intent_id": "pay_def", "amount": 120000, "error_code": "insufficient_funds" }
 
 ## 3) 워크플로우 동작
 - reservation.expired:
@@ -57,13 +60,15 @@ alwaysApply: true
   2) inventory-svc ReleaseHold으로 재고 복구
 
 ## 4) 통신 계약
-### inventory-svc (gRPC)
-- ReleaseHold(ReleaseReq) → ReleaseRes
-- CommitReservation(CommitReq) → CommitRes
+### inventory-svc (gRPC - proto-contracts)
+- reservationv1.ReleaseHoldRequest → ReleaseHoldResponse
+  - event_id, reservation_id, quantity(int32), seat_ids[]
+- reservationv1.CommitReservationRequest → CommitReservationResponse
+  - event_id, reservation_id, quantity(int32), seat_ids[], payment_intent_id
 
 ### reservation-api (REST)
 - PATCH /internal/reservations/{reservation_id}
-  Body: { "status":"CONFIRMED|CANCELLED|EXPIRED" }
+  Body: { "status": "CONFIRMED|CANCELLED|EXPIRED", "order_id": "..." }
 
 ## 5) 동시성/성능 목표
 - 단일 인스턴스 기준:
@@ -88,15 +93,32 @@ alwaysApply: true
   ts, level, event_type, reservation_id, attempt, outcome, latency_ms, trace_id, pod_name
 
 ## 8) 설정(환경변수 키만; 값 주입은 외부)
-- SQS_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/123/queue
+### AWS 설정
+- AWS_PROFILE=tacos (로컬 개발시)
+- AWS_REGION=ap-northeast-2
+- USE_SECRET_MANAGER=false (운영시 true)
+- SECRET_NAME=traffictacos/reservation-worker
+
+### SQS 설정
+- SQS_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/123/reservation-events
 - SQS_WAIT_TIME=20
+
+### Worker 설정
 - WORKER_CONCURRENCY=20
 - MAX_RETRIES=5
 - BACKOFF_BASE_MS=1000
-- INVENTORY_GRPC_ADDR=inventory-svc:8080
-- RESERVATION_API_BASE=http://reservation-api:8080
+
+### 외부 서비스
+- INVENTORY_GRPC_ADDR=inventory-svc:8020
+- RESERVATION_API_BASE=http://reservation-api:8010
+
+### 관측성
 - OTEL_EXPORTER_OTLP_ENDPOINT=http://otel-collector:4317
 - LOG_LEVEL=info
+
+### 서버 포트
+- SERVER_PORT=8040 (HTTP 헬스체크/메트릭)
+- GRPC_DEBUG_PORT=8041 (gRPC 디버깅/grpcui)
 
 ## 9) 테스트/품질
 - 단위: 이벤트 파싱, 라우팅, 재시도 로직
@@ -104,21 +126,75 @@ alwaysApply: true
 - 시뮬: expired + approved + failed 이벤트 시나리오
 - 부하: 초당 수천 이벤트를 KEDA가 Pod scale-out으로 처리하는지 시뮬 (앱은 단일 Pod 안정성만 검증)
 
-## 10) 리포지토리 구조
-- /cmd/reservation-worker/main.go
-- /internal/worker/   // sqs poller, dispatcher
-- /internal/handler/  // 이벤트 타입별 처리
-- /internal/client/   // inventory-svc gRPC, reservation-api REST
-- /internal/observability/ // otel, prometheus, logger
-- /internal/config/   // env 파서
-- /test/              // unit + integration
-- Makefile, Dockerfile, README.md
+## 10) 리포지토리 구조 (구현 완료)
+```
+reservation-worker/
+├── cmd/reservation-worker/     # 메인 애플리케이션 엔트리
+├── internal/
+│   ├── client/                # 외부 서비스 클라이언트
+│   │   ├── inventory.go       # gRPC inventory client (proto-contracts)
+│   │   └── reservation.go     # REST reservation client
+│   ├── config/                # 설정 관리
+│   │   ├── config.go          # 환경변수 로드
+│   │   └── secrets.go         # AWS Secret Manager 통합
+│   ├── handler/               # 이벤트 핸들러
+│   │   ├── event.go           # 이벤트 구조체/파싱
+│   │   ├── expired.go         # 예약 만료 처리
+│   │   ├── approved.go        # 결제 승인 처리
+│   │   └── failed.go          # 결제 실패 처리
+│   ├── observability/         # 관측성
+│   │   ├── logger.go          # zap 구조화 로깅
+│   │   ├── metrics.go         # Prometheus 메트릭
+│   │   └── tracing.go         # OpenTelemetry 추적
+│   ├── retry/                 # 재시도 로직
+│   ├── server/                # gRPC 디버깅 서버
+│   └── worker/                # 워커 풀
+│       ├── poller.go          # SQS 폴링
+│       ├── dispatcher.go      # 이벤트 디스패치
+│       └── worker.go          # 개별 워커
+├── test/                      # 테스트
+├── Dockerfile                 # 컨테이너 이미지
+├── Makefile                   # 빌드 자동화
+├── .env.local/.env.example    # 환경변수 템플릿
+└── README.md                  # 프로젝트 문서
+```
 
 ## 11) 에러 outcome 값
 - success, retried, failed, dropped
 - InvalidPayload, DownstreamError
 
+## 12) 구현 상태 (2025-01-23 완료)
+✅ **핵심 기능**
+- SQS 이벤트 폴링 (long polling, 배치 처리)
+- 3가지 이벤트 타입 처리 (expired, approved, failed)
+- proto-contracts 기반 gRPC 클라이언트
+- Exponential backoff 재시도 (1s→2s→4s→8s, 최대 5회)
+- Worker pool 동시성 (기본 20 goroutines)
+
+✅ **AWS 통합**
+- AWS SDK v2, profile 기반 인증 (tacos)
+- Secret Manager 지원 (선택적)
+- 환경변수 + 시크릿 병합
+
+✅ **관측성**
+- OpenTelemetry 분산 추적
+- Prometheus 메트릭 수집
+- zap 구조화 JSON 로깅
+- 헬스체크 엔드포인트 (:8040/health, :8040/ready)
+
+✅ **개발/디버깅**
+- grpcui 지원 (:8041 gRPC reflection)
+- Docker 컨테이너화 (linux/arm64)
+- Makefile 빌드 자동화
+- 단위/통합 테스트 구조
+
+✅ **운영 준비**
+- KEDA 호환 stateless 설계
+- 멱등성 보장 (reservation_id 기반)
+- Graceful shutdown
+- 설정 외부화 (.env.local, Secret Manager)
+
 ### 최종 지시
-위 명세에 따라 reservation-worker의 **애플리케이션 코드/계약/관측/테스트**를 생성하세요.  
-인프라/배포(K8s/Helm/IaC, KEDA 리소스 정의)는 포함하지 말고,  
-애플리케이션은 **stateless, 큐 backlog 기반 오토스케일링(KEDA 전제)**에 안전하게 동작하도록 하세요.
+위 명세에 따라 reservation-worker의 **애플리케이션 코드/계약/관측/테스트**가 완료되었습니다.
+인프라/배포(K8s/Helm/IaC, KEDA 리소스 정의)는 포함하지 않으며,
+애플리케이션은 **stateless, 큐 backlog 기반 오토스케일링(KEDA 전제)**에 안전하게 동작합니다.

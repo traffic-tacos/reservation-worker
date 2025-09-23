@@ -195,7 +195,7 @@ docker build -t gateway-api:latest .
 | 2 | Reservation | Kotlin + Spring WebFlux | DynamoDB | REST + gRPC | Reactive, Event sourcing |
 | 2 | Inventory | Go + gRPC | DynamoDB | gRPC | High performance, Zero oversell |
 | 2 | Payment Sim | Go + gRPC | In-memory | gRPC + EventBridge + Webhooks | External API simulation |
-| 3 | Reservation Worker | Go/Kotlin | DynamoDB | SQS + Events | K8s Job, KEDA scaling, Background processing |
+| 3 | Reservation Worker | Go | SQS/EventBridge | SQS + gRPC + REST | K8s Job, KEDA scaling, Background processing |
 
 ### Event-Driven Architecture
 
@@ -258,6 +258,9 @@ docker build -t gateway-api:latest .
   - `reservation/v1/inventory.proto`: InventoryService 정의
   - `reservation/v1/reservation.proto`: ReservationService 정의
 - ✅ **Payment Sim API**: 중앙화된 `github.com/traffic-tacos/proto-contracts` 모듈 사용
+- ✅ **Reservation Worker**: proto-contracts reservationv1 패키지 사용
+  - inventory gRPC 클라이언트: `reservationv1.InventoryServiceClient`
+  - 이벤트 처리: ReleaseHold, CommitReservation proto 타입 직접 사용
 - ✅ **Reservation** → **Inventory**: gRPC 통신 (CheckAvailability, HoldSeats, CommitReservation, ReleaseHold)
 - ✅ **Reservation API gRPC Server**: 포트 8011에서 ReservationService 제공
 
@@ -265,18 +268,21 @@ docker build -t gateway-api:latest .
 - ❌ **Gateway** → **Reservation**: `reservation.proto` gRPC 클라이언트 필요
 - ❌ **Inventory API**: Traffic Tacos proto-contracts 구조로 마이그레이션 필요
 - ✅ **Payment Sim API**: proto-contracts 모듈 사용 중
+- ✅ **Reservation Worker**: proto-contracts 완전 통합 완료
 
 **Proto 생성 명령어:**
 - **Reservation API**: `./generate_proto.sh` (Traffic Tacos 구조)
 - **Inventory API**: `make generate` (기존 구조, 마이그레이션 필요)
 - **Gateway API**: `make generate` (proto 설정 필요)
 - **Payment Sim API**: proto-contracts 모듈 사용 (로컬 생성 불필요)
+- **Reservation Worker**: proto-contracts 모듈 사용 (로컬 생성 불필요)
 
 **Proto 파일 위치:**
 - `reservation-api/src/main/proto/` (Traffic Tacos 구조: common/v1, reservation/v1)
 - `inventory-api/proto/` (Go 서버, 기존 구조)
 - `gateway-api/proto/` (Go 클라이언트, 생성 필요)
 - `payment-sim-api/` proto-contracts 모듈 사용
+- `reservation-worker/` proto-contracts 모듈 사용 (reservationv1 패키지)
 
 ### Database Schema Patterns
 - **DynamoDB Tables**: `reservations`, `orders`, `idempotency`, `outbox` (reservation-api)
@@ -636,11 +642,14 @@ The **reservation-worker** is a Kubernetes Job with KEDA auto-scaling, which req
 
 1. **Standalone Mode** (Recommended for Development):
    ```bash
-   # Run worker as a regular Go/Kotlin application
+   # Run worker as a regular Go application with Makefile
    cd reservation-worker
-   go run cmd/worker/main.go --mode=standalone
-   # OR for Kotlin
-   ./gradlew bootRun --args="--mode=standalone"
+
+   # Run with local environment
+   make run-with-env
+
+   # Or run manually
+   go run cmd/reservation-worker/main.go
    ```
 
 2. **SQS Simulation Mode**:
@@ -648,15 +657,20 @@ The **reservation-worker** is a Kubernetes Job with KEDA auto-scaling, which req
    # Use LocalStack SQS with polling simulation
    cd reservation-worker
    export SQS_QUEUE_URL=http://localhost:4566/000000000000/reservation-events
-   go run cmd/worker/main.go --mode=sqs-local
+   export AWS_PROFILE=tacos
+   make run
    ```
 
 3. **Docker Job Simulation**:
    ```bash
-   # Simulate K8s job behavior locally
-   docker run --rm --network host \
-     -e SQS_QUEUE_URL=http://localhost:4566/000000000000/reservation-events \
-     -e AWS_REGION=ap-northeast-2 \
+   # Build and run Docker container
+   cd reservation-worker
+   make docker-build
+   make docker-run
+
+   # Or manually
+   docker run --rm -p 8040:8040 -p 8041:8041 \
+     --env-file .env.local \
      reservation-worker:latest
    ```
 
@@ -677,7 +691,15 @@ curl -X POST http://localhost:8010/v1/reservations \
   -d '{"event_id": "test", "qty": 1}'
 
 # Monitor worker processing
-tail -f logs/reservation-worker.log
+tail -f reservation-worker.log
+
+# Test with grpcui (debugging interface)
+cd reservation-worker
+make grpcui  # Opens http://localhost:8081 for gRPC :8041
+
+# Health checks
+curl http://localhost:8040/health
+curl http://localhost:8040/metrics
 ```
 
 **Queue Monitoring:**
@@ -691,10 +713,12 @@ aws sqs get-queue-attributes \
 
 **Key Differences from Web Services:**
 - **Event-driven**: Triggered by SQS messages, not HTTP requests
-- **Batch processing**: Processes multiple reservations per job run
-- **Auto-scaling**: KEDA scales based on queue depth (0-N pods)
-- **Stateless**: Each job run is independent
-- **No persistent server**: Starts, processes, and terminates
+- **Worker pool**: Concurrent goroutine processing (20 workers default)
+- **Auto-scaling**: KEDA scales pods based on SQS queue depth (0-50 pods)
+- **Stateless**: Designed for horizontal scaling, no persistent state
+- **Dual-port service**: HTTP :8040 (health/metrics) + gRPC :8041 (debugging)
+- **Retry mechanism**: Exponential backoff (1s→2s→4s→8s, max 5 attempts)
+- **Proto-contracts**: Full integration with reservationv1 gRPC services
 
 ### Frontend (Reservation Web) Local Development
 
@@ -883,27 +907,29 @@ GET /api/v1/payments/{id}/status
 보조 흐름(백그라운드/이벤트)
 - 예약 만료(60s): reservation-api가 생성 시 EventBridge Scheduler에 만료 이벤트 등록 → 만료 시 reservation-api 내부 핸들러(또는 SQS → reservation-worker)가 inventory-svc.ReleaseHold와 상태 EXPIRED 갱신 수행.
 - 결제 웹훅: payment-sim-api → (REST) reservation-api /internal/payment/webhook → reservation-api가 상태 갱신/확정 트리거 → 필요 시 (gRPC) inventory-svc.CommitReservation.
-- Worker 소비: reservation-worker는 SQS에서 reservation.expired|payment.approved|payment.failed 이벤트를 읽어 inventory-svc gRPC와 reservation-api REST를 호출(autoscale은 KEDA).
+- Worker 소비: reservation-worker는 SQS에서 reservation.expired|payment.approved|payment.failed 이벤트를 읽어 inventory-svc gRPC(proto-contracts)와 reservation-api REST를 호출(autoscale은 KEDA).
 
 ## reservation-worker가 필요한 순간
 
 1. 예약 만료 처리 (60초 Hold Expiry)
 - 유저가 좌석을 선택하면 → reservation-api가 DynamoDB에 HOLD 상태로 저장 + EventBridge Scheduler(60s 후) 등록
-- 60초 뒤 EventBridge → SQS 이벤트 발행
+- 60초 뒤 EventBridge → SQS 이벤트 발행 (`reservation.expired`)
 - reservation-worker가 이 SQS 이벤트를 소비해서:
-- inventory-svc:8021에 gRPC ReleaseHold → 좌석/재고 복구
-- reservation-api:8010 REST /internal/reservations/{id} PATCH → 상태 EXPIRED로 변경
+  - inventory-svc:8021에 gRPC `reservationv1.ReleaseHoldRequest` → 좌석/재고 복구
+  - reservation-api:8010 REST `/internal/reservations/{id}` PATCH → 상태 EXPIRED로 변경
+- Worker 특징: 20 goroutines 동시 처리, exponential backoff 재시도
 
 👉 없으면, 만료된 예약이 DB에 계속 HOLD로 남아서 오버셀 발생 위험.
 
 ⸻
 
 2. 결제 결과 후속 처리
-- payment-sim-api가 webhook으로 reservation-api에 “승인/실패” 이벤트 전달
-- reservation-api는 이벤트를 SQS에 Outbox 형태로 발행 (event type: payment.approved / payment.failed)
+- payment-sim-api가 webhook으로 reservation-api에 "승인/실패" 이벤트 전달
+- reservation-api는 이벤트를 SQS에 Outbox 형태로 발행 (`payment.approved` / `payment.failed`)
 - reservation-worker가 이 이벤트를 소비해서:
-- payment.approved → inventory-svc:8021 CommitReservation → 좌석 상태 SOLD 확정
-- payment.failed → inventory-svc:8021 ReleaseHold + reservation-api:8010 상태 CANCELLED
+  - `payment.approved` → inventory-svc:8021 gRPC `reservationv1.CommitReservationRequest` → 좌석 상태 SOLD 확정
+  - `payment.failed` → inventory-svc:8021 gRPC `reservationv1.ReleaseHoldRequest` + reservation-api:8010 상태 CANCELLED
+- 이벤트 구조: EventBridge 표준 (`id`, `type`, `source`, `detail`, `time`, `trace_id`)
 
 👉 없으면, 결제는 성공했는데 좌석 확정이 안 되거나, 결제가 실패했는데 좌석이 풀리지 않는 문제 발생.
 
@@ -912,3 +938,5 @@ GET /api/v1/payments/{id}/status
 3. 장애/보상 처리
 - 예약 중간에 Downstream 에러가 나면 reservation-api는 SQS로 보상 이벤트를 발행할 수 있음
 - worker가 이를 받아 재시도/보상 트랜잭션 수행 (e.g., 좌석 강제 복구, 예약 강제 취소)
+- 관측성: OpenTelemetry 분산 추적, Prometheus 메트릭, 구조화된 로깅
+- 운영: Docker 컨테이너, Makefile 빌드 자동화, grpcui 디버깅 지원 (:8041)

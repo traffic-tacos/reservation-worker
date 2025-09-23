@@ -52,7 +52,9 @@ func main() {
 		zap.Bool("use_secret_manager", cfg.UseSecretManager),
 	)
 
-	// Initialize OpenTelemetry tracing
+	// Initialize OpenTelemetry tracing (disabled for local development)
+	// TODO: Fix schema conflict and re-enable
+	/*
 	tracingConfig := observability.TracingConfig{
 		ServiceName:      "reservation-worker",
 		ServiceVersion:   "1.0.0",
@@ -72,6 +74,7 @@ func main() {
 			logger.Error("Failed to shutdown tracer provider", zap.Error(err))
 		}
 	}()
+	*/
 
 	// Initialize Prometheus metrics
 	metrics := observability.NewMetrics()
