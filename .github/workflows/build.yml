@@ -1,0 +1,67 @@
+name: Deploy to EKS
+
+on:
+  push:
+    branches: [ main ]
+  workflow_dispatch: {}
+
+env:
+  AWS_REGION: ap-southeast-2
+  CLUSTER_NAME: ${{ secrets.EKS_CLUSTER_NAME }}
+  ECR_REPO: ${{ secrets.ECR_REPO }}
+
+jobs:
+  deploy:
+    # name: Build & Deploy
+    name: Build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+          cache: 'gradle'
+
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          aws-access-key-id: ${{ secrets.AWS_ACCESS_KEY_ID }}
+          aws-secret-access-key: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Login to Amazon ECR
+        id: login-ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Checkout proto contracts repo
+        uses: actions/checkout@v4
+        with:
+          repository: traffic-tacos/proto-contracts
+          path: proto-contracts
+          ref: main
+          # token: ${{ secrets.GH_TOKEN_CONTRACTS_REPO_READ }}   # 만약에 private repo 면
+    
+      - name: Build & Push Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .                              # repo root
+          file: ./Dockerfile
+          build-contexts: |
+            contracts=./proto-contracts
+          push: true
+          tags: |
+            ${{ env.ECR_REPO }}:${{ github.sha }}
+            ${{ env.ECR_REPO }}:latest
+
+      # - name: Update kubeconfig
+      #   run: |
+      #     aws eks update-kubeconfig --name $CLUSTER_NAME --region $AWS_REGION
+
+      # - name: Deploy manifests
+      #   run: |
+      #     kubectl apply -f k8s/deploy/
+      #     kubectl set image deploy/reservation-api reservation-api=${{ env.ECR_REPO }}:${{ github.sha }}

@@ -1,0 +1,45 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: reservation-worker
+  labels:
+    app: reservation-worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: reservation-worker
+  template:
+    metadata:
+      labels:
+        app: reservation-worker
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8040"
+        prometheus.io/path: "/metrics"
+    spec:
+      containers:
+        - name: reservation-worker
+          image: ${{ secret.ECR_BASE_REPO }}/reservation-worker:latest
+          imagePullPolicy: IfNotPresent
+          ports:
+            - name: http-metrics
+              containerPort: 8040
+            - name: grpc-debug
+              containerPort: 8041
+          readinessProbe:
+            httpGet:
+              path: /readyz
+              port: 8040
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            timeoutSeconds: 2
+            failureThreshold: 6
+          livenessProbe:
+            httpGet:
+              path: /healthz
+              port: 8040
+            initialDelaySeconds: 10
+            periodSeconds: 20
+            timeoutSeconds: 2
+            failureThreshold: 3
