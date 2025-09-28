@@ -6,9 +6,9 @@ on:
   workflow_dispatch: {}
 
 env:
-  AWS_REGION: ap-southeast-2
+  AWS_REGION: ${{ vars.AWS_REGION }}
   CLUSTER_NAME: ${{ vars.EKS_CLUSTER_NAME }}
-  ECR_REPO: ${{ vars.ECR_BASE_REPO }}/reservation-worker
+  ECR_REPO: ${{ vars.ECR_BASE_REPO }}/traffic-tacos-reservation-worker
 
 jobs:
   deploy:
