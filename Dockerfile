@@ -1,5 +1,5 @@
 # Build stage
-FROM golang:1.22-alpine AS builder
+FROM golang:1.24-alpine AS builder
 
 # Install git and ca-certificates (for HTTPS requests)
 RUN apk update && apk add --no-cache git ca-certificates && update-ca-certificates
@@ -31,7 +31,7 @@ RUN go mod verify
 COPY . .
 
 # Build the binary with optimizations
-RUN CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build \
+RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -ldflags='-w -s -extldflags "-static"' -a \
     -installsuffix cgo -o reservation-worker \
     ./cmd/reservation-worker
