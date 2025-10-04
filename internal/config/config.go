@@ -1,127 +1,109 @@
 package config
 
 import (
-	"fmt"
+	"os"
+	"strconv"
 	"time"
-
-	"github.com/caarlos0/env/v11"
 )
 
 // Config holds all configuration for the reservation worker
 type Config struct {
+	// AWS Configuration
+	AWSProfile      string
+	AWSRegion       string
+	UseSecretManager bool
+	SecretName      string
+
 	// SQS Configuration
-	SQSQueueURL string `env:"SQS_QUEUE_URL,required"`
-	SQSWaitTime int    `env:"SQS_WAIT_TIME" envDefault:"20"`
+	SQSQueueURL  string
+	SQSWaitTime  int
+	SQSRegion    string
 
 	// Worker Configuration
-	WorkerConcurrency int `env:"WORKER_CONCURRENCY" envDefault:"20"`
+	WorkerConcurrency int
+	MaxRetries        int
+	BackoffBaseMS     int
 
-	// Retry Configuration
-	MaxRetries    int `env:"MAX_RETRIES" envDefault:"5"`
-	BackoffBaseMs int `env:"BACKOFF_BASE_MS" envDefault:"1000"`
-
-	// Service Addresses
-	InventoryGRPCAddr  string `env:"INVENTORY_GRPC_ADDR,required"`
-	ReservationAPIBase string `env:"RESERVATION_API_BASE,required"`
-
-	// HTTP Server Configuration
-	HTTPPort string `env:"HTTP_PORT" envDefault:"8080"`
+	// External Services
+	InventoryGRPCAddr    string
+	ReservationAPIBase   string
 
 	// Observability
-	OtelExporterOTLPEndpoint string `env:"OTEL_EXPORTER_OTLP_ENDPOINT" envDefault:"http://otel-collector:4317"`
-	LogLevel                 string `env:"LOG_LEVEL" envDefault:"info"`
+	OTELExporterEndpoint string
+	LogLevel             string
 
-	// Derived fields
-	BackoffBaseDuration time.Duration
+	// Server Configuration
+	ServerPort     string // HTTP server for health/metrics
+	GRPCDebugPort  string // gRPC server for debugging
 }
 
 // Load loads configuration from environment variables
-func Load() (*Config, error) {
-	cfg := &Config{}
-	if err := env.Parse(cfg); err != nil {
-		return nil, fmt.Errorf("failed to parse config: %w", err)
-	}
+func Load() *Config {
+	return &Config{
+		// AWS Configuration
+		AWSProfile:       getEnv("AWS_PROFILE", ""),
+		AWSRegion:        getEnv("AWS_REGION", "ap-northeast-2"),
+		UseSecretManager: getEnvBool("USE_SECRET_MANAGER", false),
+		SecretName:       getEnv("SECRET_NAME", "traffictacos/reservation-worker"),
 
-	// Convert backoff base ms to duration
-	cfg.BackoffBaseDuration = time.Duration(cfg.BackoffBaseMs) * time.Millisecond
+		// SQS Configuration
+		SQSQueueURL:  getEnv("SQS_QUEUE_URL", "https://sqs.ap-northeast-2.amazonaws.com/123/reservation-events"),
+		SQSWaitTime:  getEnvInt("SQS_WAIT_TIME", 20),
+		SQSRegion:    getEnv("AWS_REGION", "ap-northeast-2"),
 
-	// Validate configuration
-	if err := cfg.Validate(); err != nil {
-		return nil, fmt.Errorf("config validation failed: %w", err)
-	}
+		// Worker Configuration
+		WorkerConcurrency: getEnvInt("WORKER_CONCURRENCY", 20),
+		MaxRetries:        getEnvInt("MAX_RETRIES", 5),
+		BackoffBaseMS:     getEnvInt("BACKOFF_BASE_MS", 1000),
 
-	return cfg, nil
-}
+		// External Services
+		InventoryGRPCAddr:  getEnv("INVENTORY_GRPC_ADDR", "inventory-svc:8021"),
+		ReservationAPIBase: getEnv("RESERVATION_API_BASE", "http://reservation-api:8010"),
 
-// Validate validates the configuration
-func (c *Config) Validate() error {
-	if c.SQSQueueURL == "" {
-		return fmt.Errorf("SQS_QUEUE_URL is required")
-	}
-	if c.SQSWaitTime <= 0 || c.SQSWaitTime > 20 {
-		return fmt.Errorf("SQS_WAIT_TIME must be between 1 and 20 seconds")
-	}
-	if c.WorkerConcurrency <= 0 || c.WorkerConcurrency > 1000 {
-		return fmt.Errorf("WORKER_CONCURRENCY must be between 1 and 1000")
-	}
-	if c.MaxRetries < 0 || c.MaxRetries > 10 {
-		return fmt.Errorf("MAX_RETRIES must be between 0 and 10")
-	}
-	if c.BackoffBaseMs < 100 || c.BackoffBaseMs > 10000 {
-		return fmt.Errorf("BACKOFF_BASE_MS must be between 100 and 10000 ms")
-	}
-	if c.InventoryGRPCAddr == "" {
-		return fmt.Errorf("INVENTORY_GRPC_ADDR is required")
-	}
-	if c.ReservationAPIBase == "" {
-		return fmt.Errorf("RESERVATION_API_BASE is required")
-	}
-	if c.LogLevel != "debug" && c.LogLevel != "info" && c.LogLevel != "warn" && c.LogLevel != "error" {
-		return fmt.Errorf("LOG_LEVEL must be one of: debug, info, warn, error")
-	}
+		// Observability
+		OTELExporterEndpoint: getEnv("OTEL_EXPORTER_OTLP_ENDPOINT", "http://otel-collector:4317"),
+		LogLevel:             getEnv("LOG_LEVEL", "info"),
 
-	return nil
-}
-
-// String returns a string representation of the config (without sensitive data)
-func (c *Config) String() string {
-	return fmt.Sprintf(
-		"Config{SQSQueueURL: %s, SQSWaitTime: %d, WorkerConcurrency: %d, MaxRetries: %d, BackoffBaseMs: %d, InventoryGRPCAddr: %s, ReservationAPIBase: %s, OtelExporterOTLPEndpoint: %s, LogLevel: %s}",
-		c.SQSQueueURL,
-		c.SQSWaitTime,
-		c.WorkerConcurrency,
-		c.MaxRetries,
-		c.BackoffBaseMs,
-		c.InventoryGRPCAddr,
-		c.ReservationAPIBase,
-		c.OtelExporterOTLPEndpoint,
-		c.LogLevel,
-	)
-}
-
-// GetEnvMap returns a map of all environment variables that should be set
-func GetEnvMap() map[string]string {
-	return map[string]string{
-		"SQS_QUEUE_URL":               "https://sqs.ap-northeast-2.amazonaws.com/123/queue",
-		"SQS_WAIT_TIME":               "20",
-		"WORKER_CONCURRENCY":          "20",
-		"MAX_RETRIES":                 "5",
-		"BACKOFF_BASE_MS":             "1000",
-		"INVENTORY_GRPC_ADDR":         "inventory-svc:8080",
-		"RESERVATION_API_BASE":        "http://reservation-api:8080",
-		"HTTP_PORT":                   "8080",
-		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel-collector:4317",
-		"LOG_LEVEL":                   "info",
+		// Server Configuration
+		ServerPort:    getEnv("SERVER_PORT", "8040"),
+		GRPCDebugPort: getEnv("GRPC_DEBUG_PORT", "8041"),
 	}
 }
 
-// GetBackoffDuration calculates the backoff duration for a given attempt
+// getEnv gets environment variable with default value
+func getEnv(key, defaultValue string) string {
+	if value := os.Getenv(key); value != "" {
+		return value
+	}
+	return defaultValue
+}
+
+// getEnvInt gets environment variable as integer with default value
+func getEnvInt(key string, defaultValue int) int {
+	if value := os.Getenv(key); value != "" {
+		if intValue, err := strconv.Atoi(value); err == nil {
+			return intValue
+		}
+	}
+	return defaultValue
+}
+
+// getEnvBool gets environment variable as boolean with default value
+func getEnvBool(key string, defaultValue bool) bool {
+	if value := os.Getenv(key); value != "" {
+		if boolValue, err := strconv.ParseBool(value); err == nil {
+			return boolValue
+		}
+	}
+	return defaultValue
+}
+
+// GetBackoffDuration returns the backoff duration for the given attempt
 func (c *Config) GetBackoffDuration(attempt int) time.Duration {
-	// Exponential backoff: base * 2^attempt
-	return c.BackoffBaseDuration * time.Duration(1<<attempt)
-}
-
-// IsMaxRetriesReached checks if the maximum number of retries has been reached
-func (c *Config) IsMaxRetriesReached(attempt int) bool {
-	return attempt >= c.MaxRetries
+	// Exponential backoff: 1s, 2s, 4s, 8s, 16s (max)
+	multiplier := 1
+	for i := 0; i < attempt && i < 4; i++ {
+		multiplier *= 2
+	}
+	return time.Duration(c.BackoffBaseMS*multiplier) * time.Millisecond
 }

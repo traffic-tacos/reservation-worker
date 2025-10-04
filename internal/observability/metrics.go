@@ -7,20 +7,16 @@ import (
 
 // Metrics holds all Prometheus metrics for the reservation worker
 type Metrics struct {
-	// Event processing metrics
-	EventsTotal   *prometheus.CounterVec
-	EventsLatency *prometheus.HistogramVec
-
-	// SQS metrics
-	SQSPollErrors prometheus.Counter
-
-	// Worker pool metrics
-	WorkerPoolActive prometheus.Gauge
+	EventsTotal         *prometheus.CounterVec
+	LatencyHistogram    *prometheus.HistogramVec
+	SQSPollErrors       prometheus.Counter
+	ActiveWorkers       prometheus.Gauge
+	ProcessingDuration  *prometheus.HistogramVec
 }
 
-// NewMetrics creates and registers all metrics
+// NewMetrics creates and registers all Prometheus metrics
 func NewMetrics() *Metrics {
-	metrics := &Metrics{
+	return &Metrics{
 		EventsTotal: promauto.NewCounterVec(
 			prometheus.CounterOpts{
 				Name: "worker_events_total",
@@ -29,11 +25,11 @@ func NewMetrics() *Metrics {
 			[]string{"type", "outcome"},
 		),
 
-		EventsLatency: promauto.NewHistogramVec(
+		LatencyHistogram: promauto.NewHistogramVec(
 			prometheus.HistogramOpts{
 				Name:    "worker_latency_seconds",
 				Help:    "Event processing latency in seconds",
-				Buckets: prometheus.DefBuckets, // 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10
+				Buckets: prometheus.DefBuckets, // Default: 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1, 2.5, 5, 10
 			},
 			[]string{"type"},
 		),
@@ -41,53 +37,59 @@ func NewMetrics() *Metrics {
 		SQSPollErrors: promauto.NewCounter(
 			prometheus.CounterOpts{
 				Name: "sqs_poll_errors_total",
-				Help: "Total number of SQS poll errors",
+				Help: "Total number of SQS polling errors",
 			},
 		),
 
-		WorkerPoolActive: promauto.NewGauge(
+		ActiveWorkers: promauto.NewGauge(
 			prometheus.GaugeOpts{
-				Name: "worker_pool_active_gauge",
-				Help: "Number of active workers in the pool",
+				Name: "worker_active_goroutines",
+				Help: "Current number of active worker goroutines",
 			},
+		),
+
+		ProcessingDuration: promauto.NewHistogramVec(
+			prometheus.HistogramOpts{
+				Name:    "worker_processing_duration_seconds",
+				Help:    "Time spent processing events by handler type",
+				Buckets: []float64{0.001, 0.005, 0.01, 0.025, 0.05, 0.1, 0.25, 0.5, 1.0},
+			},
+			[]string{"handler", "outcome"},
 		),
 	}
-
-	return metrics
 }
 
-// RecordEvent records an event processing result
-func (m *Metrics) RecordEvent(eventType, outcome string) {
+// RecordEventProcessed records a processed event with outcome
+func (m *Metrics) RecordEventProcessed(eventType, outcome string) {
 	m.EventsTotal.WithLabelValues(eventType, outcome).Inc()
 }
 
-// RecordEventLatency records the latency of an event processing
-func (m *Metrics) RecordEventLatency(eventType string, latency float64) {
-	m.EventsLatency.With(prometheus.Labels{"type": eventType}).Observe(latency)
+// RecordEventLatency records event processing latency
+func (m *Metrics) RecordEventLatency(eventType string, seconds float64) {
+	m.LatencyHistogram.WithLabelValues(eventType).Observe(seconds)
 }
 
-// RecordSQSError records an SQS polling error
-func (m *Metrics) RecordSQSError() {
+// RecordSQSPollError increments SQS polling error counter
+func (m *Metrics) RecordSQSPollError() {
 	m.SQSPollErrors.Inc()
 }
 
-// SetWorkerPoolActive sets the number of active workers
-func (m *Metrics) SetWorkerPoolActive(count float64) {
-	m.WorkerPoolActive.Set(count)
+// SetActiveWorkers sets the current number of active workers
+func (m *Metrics) SetActiveWorkers(count float64) {
+	m.ActiveWorkers.Set(count)
 }
 
-// EventOutcome represents the outcome of event processing
-type EventOutcome string
+// RecordProcessingDuration records handler processing duration
+func (m *Metrics) RecordProcessingDuration(handler, outcome string, seconds float64) {
+	m.ProcessingDuration.WithLabelValues(handler, outcome).Observe(seconds)
+}
 
+// Outcome constants for metrics
 const (
-	OutcomeSuccess EventOutcome = "success"
-	OutcomeRetried EventOutcome = "retried"
-	OutcomeFailed  EventOutcome = "failed"
-	OutcomeDropped EventOutcome = "dropped"
+	OutcomeSuccess         = "success"
+	OutcomeRetried         = "retried"
+	OutcomeFailed          = "failed"
+	OutcomeDropped         = "dropped"
+	OutcomeInvalidPayload  = "invalid_payload"
+	OutcomeDownstreamError = "downstream_error"
 )
-
-// String returns the string representation of EventOutcome
-func (o EventOutcome) String() string {
-	return string(o)
-}
-

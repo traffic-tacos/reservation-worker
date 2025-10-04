@@ -1,0 +1,44 @@
+# Git files
+.git
+.gitignore
+
+# Environment files
+.env
+.env.local
+.env.*.local
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# Documentation
+*.md
+docs/
+
+# Test files
+*_test.go
+test/
+coverage.out
+*.test
+
+# Build artifacts
+bin/
+dist/
+reservation-worker
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Temporary files
+*.tmp
+tmp/
+
+# CI/CD
+.github/
+.gitlab-ci.yml
+
+# Cursor rules
+.cursor/

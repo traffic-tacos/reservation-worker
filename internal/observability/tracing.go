@@ -2,92 +2,92 @@ package observability
 
 import (
 	"context"
-	"time"
+	"fmt"
 
-	"go.opentelemetry.io/contrib/instrumentation/runtime"
 	"go.opentelemetry.io/otel"
-	"go.opentelemetry.io/otel/exporters/otlp/otlpmetric/otlpmetricgrpc"
-	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracegrpc"
+	"go.opentelemetry.io/otel/codes"
+	"go.opentelemetry.io/otel/exporters/otlp/otlptrace/otlptracehttp"
 	"go.opentelemetry.io/otel/propagation"
-	"go.opentelemetry.io/otel/sdk/metric"
-	"go.opentelemetry.io/otel/sdk/trace"
-	traceapi "go.opentelemetry.io/otel/trace"
-	"google.golang.org/grpc"
-	"google.golang.org/grpc/credentials/insecure"
+	"go.opentelemetry.io/otel/sdk/resource"
+	sdktrace "go.opentelemetry.io/otel/sdk/trace"
+	semconv "go.opentelemetry.io/otel/semconv/v1.21.0"
+	"go.opentelemetry.io/otel/trace"
 )
 
-// SetupTracing initializes OpenTelemetry tracing
-func SetupTracing(ctx context.Context, endpoint string) (*trace.TracerProvider, error) {
-	// Create OTLP trace exporter
-	traceExporter, err := otlptracegrpc.New(
-		ctx,
-		otlptracegrpc.WithEndpoint(endpoint),
-		otlptracegrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
+// TracingConfig holds OpenTelemetry configuration
+type TracingConfig struct {
+	ServiceName string
+	ServiceVersion string
+	Environment string
+	ExporterEndpoint string
+}
+
+// InitTracing initializes OpenTelemetry tracing
+func InitTracing(ctx context.Context, config TracingConfig) (*sdktrace.TracerProvider, error) {
+	// Create OTLP HTTP exporter
+	exporter, err := otlptracehttp.New(ctx,
+		otlptracehttp.WithEndpoint(config.ExporterEndpoint),
+		otlptracehttp.WithInsecure(), // Use TLS in production
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create OTLP exporter: %w", err)
 	}
 
-	// Create trace provider
-	traceProvider := trace.NewTracerProvider(
-		trace.WithBatcher(traceExporter,
-			trace.WithBatchTimeout(time.Second*5),
-			trace.WithMaxExportBatchSize(512),
+	// Create resource with service information
+	res, err := resource.Merge(
+		resource.Default(),
+		resource.NewWithAttributes(
+			semconv.SchemaURL,
+			semconv.ServiceName(config.ServiceName),
+			semconv.ServiceVersion(config.ServiceVersion),
+			semconv.DeploymentEnvironment(config.Environment),
 		),
-		trace.WithSampler(trace.AlwaysSample()),
-	)
-
-	otel.SetTracerProvider(traceProvider)
-
-	// Set global propagator for trace context
-	otel.SetTextMapPropagator(propagation.TraceContext{})
-
-	return traceProvider, nil
-}
-
-// SetupMetrics initializes OpenTelemetry metrics
-func SetupMetrics(ctx context.Context, endpoint string) (*metric.MeterProvider, error) {
-	// Create OTLP metric exporter
-	metricExporter, err := otlpmetricgrpc.New(
-		ctx,
-		otlpmetricgrpc.WithEndpoint(endpoint),
-		otlpmetricgrpc.WithDialOption(grpc.WithTransportCredentials(insecure.NewCredentials())),
 	)
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("failed to create resource: %w", err)
 	}
 
-	// Create meter provider
-	meterProvider := metric.NewMeterProvider(
-		metric.WithReader(metric.NewPeriodicReader(metricExporter,
-			metric.WithInterval(10*time.Second),
-		)),
+	// Create tracer provider
+	tp := sdktrace.NewTracerProvider(
+		sdktrace.WithBatcher(exporter),
+		sdktrace.WithResource(res),
+		sdktrace.WithSampler(sdktrace.AlwaysSample()), // Use probabilistic sampling in production
 	)
 
-	otel.SetMeterProvider(meterProvider)
+	// Set global tracer provider
+	otel.SetTracerProvider(tp)
 
-	return meterProvider, nil
+	// Set global propagator for trace context propagation
+	otel.SetTextMapPropagator(propagation.NewCompositeTextMapPropagator(
+		propagation.TraceContext{},
+		propagation.Baggage{},
+	))
+
+	return tp, nil
 }
 
-// SetupRuntimeMetrics starts runtime metrics collection
-func SetupRuntimeMetrics(ctx context.Context) error {
-	return runtime.Start(
-		runtime.WithMinimumReadMemStatsInterval(time.Second * 10),
-	)
+// Tracer returns a tracer for the reservation worker
+func Tracer() trace.Tracer {
+	return otel.Tracer("reservation-worker")
 }
 
-// GetSpanFromContext extracts span from context
-func GetSpanFromContext(ctx context.Context) interface{} {
-	// Return the span from the context
-	return traceapi.SpanFromContext(ctx)
+// StartSpan starts a new span with the given name and context
+func StartSpan(ctx context.Context, name string, opts ...trace.SpanStartOption) (context.Context, trace.Span) {
+	return Tracer().Start(ctx, name, opts...)
 }
 
-// Tracer returns the global tracer
-func Tracer(name string) interface{} {
-	return otel.Tracer(name)
+// AddSpanEvent adds an event to the current span
+func AddSpanEvent(span trace.Span, name string, attributes ...trace.EventOption) {
+	span.AddEvent(name, attributes...)
 }
 
-// Meter returns the global meter
-func Meter(name string) interface{} {
-	return otel.Meter(name)
+// SetSpanError sets an error on the span
+func SetSpanError(span trace.Span, err error) {
+	span.RecordError(err)
+	span.SetStatus(codes.Error, err.Error())
+}
+
+// SetSpanSuccess marks the span as successful
+func SetSpanSuccess(span trace.Span) {
+	span.SetStatus(codes.Ok, "")
 }

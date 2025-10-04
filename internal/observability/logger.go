@@ -1,114 +1,73 @@
 package observability
 
 import (
-	"context"
-
 	"go.uber.org/zap"
 	"go.uber.org/zap/zapcore"
 )
 
-// Logger wraps zap logger with context support
+// Logger wraps zap logger with structured logging for reservation worker
 type Logger struct {
 	*zap.Logger
 }
 
 // NewLogger creates a new structured logger
 func NewLogger(level string) (*Logger, error) {
-	var zapLevel zapcore.Level
+	config := zap.NewProductionConfig()
+
+	// Set log level
 	switch level {
 	case "debug":
-		zapLevel = zapcore.DebugLevel
+		config.Level = zap.NewAtomicLevelAt(zapcore.DebugLevel)
 	case "info":
-		zapLevel = zapcore.InfoLevel
+		config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	case "warn":
-		zapLevel = zapcore.WarnLevel
+		config.Level = zap.NewAtomicLevelAt(zapcore.WarnLevel)
 	case "error":
-		zapLevel = zapcore.ErrorLevel
+		config.Level = zap.NewAtomicLevelAt(zapcore.ErrorLevel)
 	default:
-		zapLevel = zapcore.InfoLevel
+		config.Level = zap.NewAtomicLevelAt(zapcore.InfoLevel)
 	}
 
-	config := zap.Config{
-		Level:       zap.NewAtomicLevelAt(zapLevel),
-		Development: false,
-		Encoding:    "json",
-		EncoderConfig: zapcore.EncoderConfig{
-			TimeKey:        "ts",
-			LevelKey:       "level",
-			NameKey:        "logger",
-			CallerKey:      "caller",
-			FunctionKey:    zapcore.OmitKey,
-			MessageKey:     "msg",
-			StacktraceKey:  "stacktrace",
-			LineEnding:     zapcore.DefaultLineEnding,
-			EncodeLevel:    zapcore.LowercaseLevelEncoder,
-			EncodeTime:     zapcore.ISO8601TimeEncoder,
-			EncodeDuration: zapcore.SecondsDurationEncoder,
-			EncodeCaller:   zapcore.ShortCallerEncoder,
-		},
-		OutputPaths:      []string{"stdout"},
-		ErrorOutputPaths: []string{"stderr"},
-	}
+	// JSON output for structured logging
+	config.Encoding = "json"
+	config.EncoderConfig.TimeKey = "ts"
+	config.EncoderConfig.LevelKey = "level"
+	config.EncoderConfig.MessageKey = "msg"
+	config.EncoderConfig.EncodeTime = zapcore.ISO8601TimeEncoder
 
-	logger, err := config.Build(
-		zap.AddCaller(),
-		zap.AddCallerSkip(1),
-		zap.AddStacktrace(zapcore.ErrorLevel),
-	)
+	logger, err := config.Build()
 	if err != nil {
 		return nil, err
 	}
 
-	return &Logger{logger}, nil
+	return &Logger{Logger: logger}, nil
 }
 
-// WithContext returns a logger with context fields
-func (l *Logger) WithContext(ctx context.Context) *Logger {
-	logger := l.Logger
-
-	// Add trace ID if available
-	if span := GetSpanFromContext(ctx); span != nil {
-		// For now, we can't easily extract trace ID from interface{}
-		// This would need proper OpenTelemetry span handling
-		logger = logger.With(zap.String("trace_id", "unknown"))
-	}
-
-	// Add other context fields as needed
-	if podName := getPodNameFromContext(ctx); podName != "" {
-		logger = logger.With(zap.String("pod_name", podName))
-	}
-
-	return &Logger{logger}
-}
-
-// EventLog creates a structured log entry for event processing
-func (l *Logger) EventLog(ctx context.Context, eventType, reservationID string, fields map[string]interface{}) *Logger {
-	logger := l.WithContext(ctx).Logger.With(
+// WithEvent adds event-specific fields to logger
+func (l *Logger) WithEvent(eventType, reservationID, eventID string) *zap.Logger {
+	return l.With(
 		zap.String("event_type", eventType),
 		zap.String("reservation_id", reservationID),
+		zap.String("event_id", eventID),
 	)
-
-	for k, v := range fields {
-		logger = logger.With(zap.Any(k, v))
-	}
-
-	return &Logger{logger}
 }
 
-// ErrorLog creates a structured error log entry
-func (l *Logger) ErrorLog(ctx context.Context, err error, fields map[string]interface{}) *Logger {
-	logger := l.WithContext(ctx).Logger.With(zap.Error(err))
-
-	for k, v := range fields {
-		logger = logger.With(zap.Any(k, v))
-	}
-
-	return &Logger{logger}
+// WithTrace adds trace ID to logger
+func (l *Logger) WithTrace(traceID string) *zap.Logger {
+	return l.With(zap.String("trace_id", traceID))
 }
 
-// getPodNameFromContext extracts pod name from context (placeholder for future implementation)
-func getPodNameFromContext(ctx context.Context) string {
-	// In Kubernetes, this could be extracted from downward API or env var
-	// For now, return empty string
-	return ""
+// WithAttempt adds retry attempt information
+func (l *Logger) WithAttempt(attempt int) *zap.Logger {
+	return l.With(zap.Int("attempt", attempt))
+}
+
+// WithOutcome adds processing outcome
+func (l *Logger) WithOutcome(outcome string) *zap.Logger {
+	return l.With(zap.String("outcome", outcome))
+}
+
+// WithLatency adds processing latency in milliseconds
+func (l *Logger) WithLatency(latencyMS int64) *zap.Logger {
+	return l.With(zap.Int64("latency_ms", latencyMS))
 }

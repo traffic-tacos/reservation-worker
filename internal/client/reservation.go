@@ -10,141 +10,116 @@ import (
 	"time"
 
 	"go.opentelemetry.io/contrib/instrumentation/net/http/otelhttp"
-	"go.uber.org/zap"
-
-	"github.com/traffic-tacos/reservation-worker/internal/observability"
 )
 
-// ReservationServiceClient wraps the HTTP client for reservation service
-type ReservationServiceClient struct {
-	baseURL string
-	client  *http.Client
-	logger  *observability.Logger
+// ReservationClient wraps HTTP client for reservation API
+type ReservationClient struct {
+	baseURL    string
+	httpClient *http.Client
 }
 
-// NewReservationServiceClient creates a new reservation service client
-func NewReservationServiceClient(baseURL string, logger *observability.Logger) *ReservationServiceClient {
-	// Create HTTP client with OpenTelemetry instrumentation
-	client := &http.Client{
-		Timeout:   30 * time.Second,
-		Transport: otelhttp.NewTransport(http.DefaultTransport),
-	}
-
-	return &ReservationServiceClient{
+// NewReservationClient creates a new reservation API client
+func NewReservationClient(baseURL string) *ReservationClient {
+	return &ReservationClient{
 		baseURL: baseURL,
-		client:  client,
-		logger:  logger,
+		httpClient: &http.Client{
+			Timeout:   30 * time.Second,
+			Transport: otelhttp.NewTransport(http.DefaultTransport),
+		},
 	}
-}
-
-// ReservationStatus represents the status of a reservation
-type ReservationStatus string
-
-const (
-	StatusHold      ReservationStatus = "HOLD"
-	StatusConfirmed ReservationStatus = "CONFIRMED"
-	StatusCancelled ReservationStatus = "CANCELLED"
-	StatusExpired   ReservationStatus = "EXPIRED"
-)
-
-// String returns the string representation of ReservationStatus
-func (s ReservationStatus) String() string {
-	return string(s)
 }
 
 // UpdateReservationStatus updates the status of a reservation
-func (c *ReservationServiceClient) UpdateReservationStatus(ctx context.Context, reservationID string, status ReservationStatus) error {
-	url := fmt.Sprintf("%s/internal/reservations/%s", c.baseURL, reservationID)
+func (c *ReservationClient) UpdateReservationStatus(ctx context.Context, req *UpdateStatusRequest) error {
+	url := fmt.Sprintf("%s/internal/reservations/%s", c.baseURL, req.ReservationID)
 
-	reqBody := map[string]interface{}{
-		"status": status.String(),
+	payload := map[string]interface{}{
+		"status": req.Status,
 	}
 
-	jsonBody, err := json.Marshal(reqBody)
+	if req.OrderID != "" {
+		payload["order_id"] = req.OrderID
+	}
+
+	jsonData, err := json.Marshal(payload)
 	if err != nil {
-		return fmt.Errorf("failed to marshal request body: %w", err)
+		return fmt.Errorf("failed to marshal request: %w", err)
 	}
 
-	req, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewBuffer(jsonBody))
+	httpReq, err := http.NewRequestWithContext(ctx, "PATCH", url, bytes.NewBuffer(jsonData))
 	if err != nil {
 		return fmt.Errorf("failed to create request: %w", err)
 	}
 
-	req.Header.Set("Content-Type", "application/json")
+	httpReq.Header.Set("Content-Type", "application/json")
 
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return fmt.Errorf("failed to send request: %w", err)
+		return fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	// Read response body for error details
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return fmt.Errorf("failed to read response body: %w", err)
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return fmt.Errorf("reservation API returned status %d: %s", resp.StatusCode, string(body))
-	}
-
-	var response map[string]interface{}
-	if err := json.Unmarshal(body, &response); err != nil {
-		c.logger.WithContext(ctx).Logger.Warn("Failed to unmarshal response body",
-			zap.String("reservation_id", reservationID),
-			zap.String("status", string(status)),
-			zap.String("response_body", string(body)),
-		)
-	} else {
-		c.logger.WithContext(ctx).Logger.Info("Successfully updated reservation status",
-			zap.String("reservation_id", reservationID),
-			zap.String("status", string(status)),
-			zap.Any("response", response),
-		)
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
 	}
 
 	return nil
 }
 
-// GetReservationStatus retrieves the current status of a reservation
-func (c *ReservationServiceClient) GetReservationStatus(ctx context.Context, reservationID string) (ReservationStatus, error) {
+// GetReservation retrieves reservation details
+func (c *ReservationClient) GetReservation(ctx context.Context, reservationID string) (*ReservationDetails, error) {
 	url := fmt.Sprintf("%s/internal/reservations/%s", c.baseURL, reservationID)
 
-	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	httpReq, err := http.NewRequestWithContext(ctx, "GET", url, nil)
 	if err != nil {
-		return "", fmt.Errorf("failed to create request: %w", err)
+		return nil, fmt.Errorf("failed to create request: %w", err)
 	}
 
-	resp, err := c.client.Do(req)
+	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return "", fmt.Errorf("failed to send request: %w", err)
+		return nil, fmt.Errorf("failed to execute request: %w", err)
 	}
 	defer resp.Body.Close()
 
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		return "", fmt.Errorf("failed to read response body: %w", err)
-	}
-
 	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		return "", fmt.Errorf("reservation API returned status %d: %s", resp.StatusCode, string(body))
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("unexpected status code %d: %s", resp.StatusCode, string(body))
 	}
 
-	var response map[string]interface{}
-	if err := json.Unmarshal(body, &response); err != nil {
-		return "", fmt.Errorf("failed to unmarshal response: %w", err)
+	var details ReservationDetails
+	if err := json.NewDecoder(resp.Body).Decode(&details); err != nil {
+		return nil, fmt.Errorf("failed to decode response: %w", err)
 	}
 
-	statusInterface, ok := response["status"]
-	if !ok {
-		return "", fmt.Errorf("status field not found in response")
-	}
-
-	statusStr, ok := statusInterface.(string)
-	if !ok {
-		return "", fmt.Errorf("status field is not a string")
-	}
-
-	status := ReservationStatus(statusStr)
-	return status, nil
+	return &details, nil
 }
+
+// UpdateStatusRequest represents a request to update reservation status
+type UpdateStatusRequest struct {
+	ReservationID string
+	Status        string // CONFIRMED, CANCELLED, EXPIRED
+	OrderID       string // Optional, for CONFIRMED status
+}
+
+// ReservationDetails represents reservation information
+type ReservationDetails struct {
+	ID            string    `json:"reservation_id"`
+	EventID       string    `json:"event_id"`
+	UserID        string    `json:"user_id"`
+	Status        string    `json:"status"`
+	SeatIDs       []string  `json:"seat_ids"`
+	Quantity      int       `json:"quantity"`
+	TotalPrice    int64     `json:"total_price"`
+	HoldExpiresAt time.Time `json:"hold_expires_at"`
+	CreatedAt     time.Time `json:"created_at"`
+	UpdatedAt     time.Time `json:"updated_at"`
+}
+
+// Reservation status constants
+const (
+	StatusHold      = "HOLD"
+	StatusConfirmed = "CONFIRMED"
+	StatusCancelled = "CANCELLED"
+	StatusExpired   = "EXPIRED"
+)

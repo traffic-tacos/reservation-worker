@@ -1,167 +1,132 @@
-package config
+package config_test
 
 import (
 	"os"
 	"testing"
 	"time"
 
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
+	"github.com/traffic-tacos/reservation-worker/internal/config"
 )
 
 func TestLoad(t *testing.T) {
-	// Set up environment variables
-	envVars := map[string]string{
-		"SQS_QUEUE_URL":               "https://sqs.ap-northeast-2.amazonaws.com/123/queue",
-		"SQS_WAIT_TIME":               "20",
-		"WORKER_CONCURRENCY":          "20",
-		"MAX_RETRIES":                 "5",
-		"BACKOFF_BASE_MS":             "1000",
-		"INVENTORY_GRPC_ADDR":         "inventory-svc:8080",
-		"RESERVATION_API_BASE":        "http://reservation-api:8080",
-		"OTEL_EXPORTER_OTLP_ENDPOINT": "http://otel-collector:4317",
-		"LOG_LEVEL":                   "info",
+	// Set test environment variables
+	os.Setenv("SQS_QUEUE_URL", "https://sqs.test.amazonaws.com/test-queue")
+	os.Setenv("WORKER_CONCURRENCY", "10")
+	os.Setenv("AWS_PROFILE", "test-profile")
+	os.Setenv("USE_SECRET_MANAGER", "true")
+	defer func() {
+		os.Unsetenv("SQS_QUEUE_URL")
+		os.Unsetenv("WORKER_CONCURRENCY")
+		os.Unsetenv("AWS_PROFILE")
+		os.Unsetenv("USE_SECRET_MANAGER")
+	}()
+
+	cfg := config.Load()
+
+	// Test loaded values
+	if cfg.SQSQueueURL != "https://sqs.test.amazonaws.com/test-queue" {
+		t.Errorf("Expected SQSQueueURL to be 'https://sqs.test.amazonaws.com/test-queue', got '%s'", cfg.SQSQueueURL)
 	}
 
-	// Set environment variables
-	for key, value := range envVars {
-		os.Setenv(key, value)
-		defer os.Unsetenv(key)
+	if cfg.WorkerConcurrency != 10 {
+		t.Errorf("Expected WorkerConcurrency to be 10, got %d", cfg.WorkerConcurrency)
 	}
 
-	// Test loading configuration
-	cfg, err := Load()
-	require.NoError(t, err)
-	require.NotNil(t, cfg)
+	if cfg.AWSProfile != "test-profile" {
+		t.Errorf("Expected AWSProfile to be 'test-profile', got '%s'", cfg.AWSProfile)
+	}
 
-	// Verify configuration values
-	assert.Equal(t, "https://sqs.ap-northeast-2.amazonaws.com/123/queue", cfg.SQSQueueURL)
-	assert.Equal(t, 20, cfg.SQSWaitTime)
-	assert.Equal(t, 20, cfg.WorkerConcurrency)
-	assert.Equal(t, 5, cfg.MaxRetries)
-	assert.Equal(t, 1000, cfg.BackoffBaseMs)
-	assert.Equal(t, time.Duration(1000)*time.Millisecond, cfg.BackoffBaseDuration)
-	assert.Equal(t, "inventory-svc:8080", cfg.InventoryGRPCAddr)
-	assert.Equal(t, "http://reservation-api:8080", cfg.ReservationAPIBase)
-	assert.Equal(t, "http://otel-collector:4317", cfg.OtelExporterOTLPEndpoint)
-	assert.Equal(t, "info", cfg.LogLevel)
+	if !cfg.UseSecretManager {
+		t.Error("Expected UseSecretManager to be true")
+	}
+
+	// Test default values
+	if cfg.MaxRetries != 5 {
+		t.Errorf("Expected default MaxRetries to be 5, got %d", cfg.MaxRetries)
+	}
+
+	if cfg.BackoffBaseMS != 1000 {
+		t.Errorf("Expected default BackoffBaseMS to be 1000, got %d", cfg.BackoffBaseMS)
+	}
 }
 
-func TestLoad_MissingRequired(t *testing.T) {
-	// Clear all environment variables
-	for key := range GetEnvMap() {
-		os.Unsetenv(key)
+func TestGetBackoffDuration(t *testing.T) {
+	cfg := &config.Config{
+		BackoffBaseMS: 1000, // 1 second base
 	}
 
-	// Test loading configuration with missing required vars
-	cfg, err := Load()
-	assert.Error(t, err)
-	assert.Nil(t, cfg)
-}
-
-func TestConfig_Validate(t *testing.T) {
 	tests := []struct {
-		name        string
-		config      *Config
-		expectError bool
+		attempt  int
+		expected time.Duration
 	}{
-		{
-			name: "valid config",
-			config: &Config{
-				SQSQueueURL:        "https://sqs.ap-northeast-2.amazonaws.com/123/queue",
-				SQSWaitTime:        20,
-				WorkerConcurrency:  20,
-				MaxRetries:         5,
-				BackoffBaseMs:      1000,
-				InventoryGRPCAddr:  "inventory-svc:8080",
-				ReservationAPIBase: "http://reservation-api:8080",
-				LogLevel:           "info",
-			},
-			expectError: false,
-		},
-		{
-			name: "invalid sqs wait time - too high",
-			config: &Config{
-				SQSQueueURL:        "https://sqs.ap-northeast-2.amazonaws.com/123/queue",
-				SQSWaitTime:        25, // > 20
-				WorkerConcurrency:  20,
-				MaxRetries:         5,
-				BackoffBaseMs:      1000,
-				InventoryGRPCAddr:  "inventory-svc:8080",
-				ReservationAPIBase: "http://reservation-api:8080",
-				LogLevel:           "info",
-			},
-			expectError: true,
-		},
-		{
-			name: "invalid log level",
-			config: &Config{
-				SQSQueueURL:        "https://sqs.ap-northeast-2.amazonaws.com/123/queue",
-				SQSWaitTime:        20,
-				WorkerConcurrency:  20,
-				MaxRetries:         5,
-				BackoffBaseMs:      1000,
-				InventoryGRPCAddr:  "inventory-svc:8080",
-				ReservationAPIBase: "http://reservation-api:8080",
-				LogLevel:           "invalid",
-			},
-			expectError: true,
-		},
+		{0, 1 * time.Second},   // 1s
+		{1, 2 * time.Second},   // 2s
+		{2, 4 * time.Second},   // 4s
+		{3, 8 * time.Second},   // 8s
+		{4, 16 * time.Second},  // 16s (max)
+		{5, 16 * time.Second},  // 16s (capped at max)
+		{10, 16 * time.Second}, // 16s (capped at max)
 	}
 
 	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			err := tt.config.Validate()
-			if tt.expectError {
-				assert.Error(t, err)
-			} else {
-				assert.NoError(t, err)
+		t.Run("", func(t *testing.T) {
+			got := cfg.GetBackoffDuration(tt.attempt)
+			if got != tt.expected {
+				t.Errorf("GetBackoffDuration(%d) = %v, want %v", tt.attempt, got, tt.expected)
 			}
 		})
 	}
 }
 
-func TestConfig_GetBackoffDuration(t *testing.T) {
-	cfg := &Config{
-		BackoffBaseDuration: time.Second,
-	}
-
-	// Test backoff calculation
-	assert.Equal(t, time.Second, cfg.GetBackoffDuration(0))
-	assert.Equal(t, 2*time.Second, cfg.GetBackoffDuration(1))
-	assert.Equal(t, 4*time.Second, cfg.GetBackoffDuration(2))
-	assert.Equal(t, 8*time.Second, cfg.GetBackoffDuration(3))
-}
-
-func TestConfig_IsMaxRetriesReached(t *testing.T) {
-	cfg := &Config{MaxRetries: 3}
-
-	assert.False(t, cfg.IsMaxRetriesReached(0))
-	assert.False(t, cfg.IsMaxRetriesReached(2))
-	assert.True(t, cfg.IsMaxRetriesReached(3))
-	assert.True(t, cfg.IsMaxRetriesReached(4))
-}
-
-func TestGetEnvMap(t *testing.T) {
-	envMap := GetEnvMap()
-	assert.NotEmpty(t, envMap)
-
-	// Check that all expected keys are present
-	expectedKeys := []string{
+func TestLoadWithDefaults(t *testing.T) {
+	// Clear all relevant environment variables to test defaults
+	envVars := []string{
+		"AWS_PROFILE",
+		"AWS_REGION",
+		"USE_SECRET_MANAGER",
 		"SQS_QUEUE_URL",
 		"SQS_WAIT_TIME",
 		"WORKER_CONCURRENCY",
 		"MAX_RETRIES",
-		"BACKOFF_BASE_MS",
 		"INVENTORY_GRPC_ADDR",
 		"RESERVATION_API_BASE",
 		"OTEL_EXPORTER_OTLP_ENDPOINT",
 		"LOG_LEVEL",
+		"SERVER_PORT",
 	}
 
-	for _, key := range expectedKeys {
-		assert.Contains(t, envMap, key)
-		assert.NotEmpty(t, envMap[key])
+	for _, envVar := range envVars {
+		os.Unsetenv(envVar)
+	}
+
+	cfg := config.Load()
+
+	// Check default values
+	if cfg.AWSProfile != "tacos" {
+		t.Errorf("Expected default AWSProfile to be 'tacos', got '%s'", cfg.AWSProfile)
+	}
+
+	if cfg.AWSRegion != "ap-northeast-2" {
+		t.Errorf("Expected default AWSRegion to be 'ap-northeast-2', got '%s'", cfg.AWSRegion)
+	}
+
+	if cfg.UseSecretManager {
+		t.Error("Expected default UseSecretManager to be false")
+	}
+
+	if cfg.SQSWaitTime != 20 {
+		t.Errorf("Expected default SQSWaitTime to be 20, got %d", cfg.SQSWaitTime)
+	}
+
+	if cfg.WorkerConcurrency != 20 {
+		t.Errorf("Expected default WorkerConcurrency to be 20, got %d", cfg.WorkerConcurrency)
+	}
+
+	if cfg.LogLevel != "info" {
+		t.Errorf("Expected default LogLevel to be 'info', got '%s'", cfg.LogLevel)
+	}
+
+	if cfg.ServerPort != "8040" {
+		t.Errorf("Expected default ServerPort to be '8040', got '%s'", cfg.ServerPort)
 	}
 }
-
