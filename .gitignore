@@ -53,6 +53,9 @@ tmp/
 dist/
 build/
 
+# Built binary (project-specific)
+reservation-worker
+
 # Dependency directories
 vendor/
 

@@ -1,0 +1,68 @@
+info:
+  contact: {}
+paths:
+  /api/v1/config:
+    get:
+      consumes:
+      - application/json
+      description: Get service configuration information (safe for exposure)
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get service configuration
+      tags:
+      - config
+  /api/v1/status:
+    get:
+      consumes:
+      - application/json
+      description: Get detailed service status and metrics
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Get service status
+      tags:
+      - status
+  /health:
+    get:
+      consumes:
+      - application/json
+      description: Check if the service is healthy
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Health check endpoint
+      tags:
+      - health
+  /ready:
+    get:
+      consumes:
+      - application/json
+      description: Check if the service is ready to handle requests
+      produces:
+      - application/json
+      responses:
+        "200":
+          description: OK
+          schema:
+            additionalProperties: true
+            type: object
+      summary: Readiness check endpoint
+      tags:
+      - health
+swagger: "2.0"
