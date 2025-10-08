@@ -9,15 +9,15 @@ import (
 // Config holds all configuration for the reservation worker
 type Config struct {
 	// AWS Configuration
-	AWSProfile      string
-	AWSRegion       string
+	AWSProfile       string
+	AWSRegion        string
 	UseSecretManager bool
-	SecretName      string
+	SecretName       string
 
 	// SQS Configuration
-	SQSQueueURL  string
-	SQSWaitTime  int
-	SQSRegion    string
+	SQSQueueURL string
+	SQSWaitTime int
+	SQSRegion   string
 
 	// Worker Configuration
 	WorkerConcurrency int
@@ -25,31 +25,31 @@ type Config struct {
 	BackoffBaseMS     int
 
 	// External Services
-	InventoryGRPCAddr    string
-	ReservationAPIBase   string
+	InventoryGRPCAddr  string
+	ReservationAPIBase string
 
 	// Observability
 	OTELExporterEndpoint string
 	LogLevel             string
 
 	// Server Configuration
-	ServerPort     string // HTTP server for health/metrics
-	GRPCDebugPort  string // gRPC server for debugging
+	ServerPort    string // HTTP server for health/metrics
+	GRPCDebugPort string // gRPC server for debugging
 }
 
 // Load loads configuration from environment variables
 func Load() *Config {
 	return &Config{
 		// AWS Configuration
-		AWSProfile:       getEnv("AWS_PROFILE", ""),
+		AWSProfile:       getEnv("AWS_PROFILE", "tacos"),
 		AWSRegion:        getEnv("AWS_REGION", "ap-northeast-2"),
 		UseSecretManager: getEnvBool("USE_SECRET_MANAGER", false),
 		SecretName:       getEnv("SECRET_NAME", "traffictacos/reservation-worker"),
 
 		// SQS Configuration
-		SQSQueueURL:  getEnv("SQS_QUEUE_URL", "https://sqs.ap-northeast-2.amazonaws.com/123/reservation-events"),
-		SQSWaitTime:  getEnvInt("SQS_WAIT_TIME", 20),
-		SQSRegion:    getEnv("AWS_REGION", "ap-northeast-2"),
+		SQSQueueURL: getEnv("SQS_QUEUE_URL", "https://sqs.ap-northeast-2.amazonaws.com/123/reservation-events"),
+		SQSWaitTime: getEnvInt("SQS_WAIT_TIME", 20),
+		SQSRegion:   getEnv("AWS_REGION", "ap-northeast-2"),
 
 		// Worker Configuration
 		WorkerConcurrency: getEnvInt("WORKER_CONCURRENCY", 20),

@@ -63,12 +63,12 @@ func TestEvent_ParseEventDetail(t *testing.T) {
 			wantErr: false,
 		},
 		{
-			name: "unknown event type returns raw detail",
+			name: "unknown event type returns error",
 			event: handler.Event{
 				Type:   "unknown.event",
 				Detail: json.RawMessage(`{"test": "data"}`),
 			},
-			wantErr: false,
+			wantErr: true,
 		},
 		{
 			name: "invalid payload JSON",
@@ -109,17 +109,18 @@ func TestValidateEventType(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.eventType, func(t *testing.T) {
-			// Create event with the test type
+			// Create event with the test type and valid JSON detail
 			event := handler.Event{
-				Type: tt.eventType,
+				Type:   tt.eventType,
+				Detail: json.RawMessage(`{"test": "data"}`),
 			}
 
 			// Check if parsing returns error for invalid types
 			_, err := event.ParseEventDetail()
-			isValid := err == nil || err.Error() != "unknown event type: "+tt.eventType
+			isValid := err == nil
 
 			if isValid != tt.want {
-				t.Errorf("Event type %q validation = %v, want %v", tt.eventType, isValid, tt.want)
+				t.Errorf("Event type %q validation = %v, want %v (error: %v)", tt.eventType, isValid, tt.want, err)
 			}
 		})
 	}
