@@ -56,46 +56,52 @@ func main() {
 	// Initialize OpenTelemetry tracing (disabled for local development)
 	// TODO: Fix schema conflict and re-enable
 	/*
-	tracingConfig := observability.TracingConfig{
-		ServiceName:      "reservation-worker",
-		ServiceVersion:   "1.0.0",
-		Environment:      "production", // TODO: make configurable
-		ExporterEndpoint: cfg.OTELExporterEndpoint,
-	}
-
-	tp, err := observability.InitTracing(ctx, tracingConfig)
-	if err != nil {
-		logger.Error("Failed to initialize tracing", zap.Error(err))
-		os.Exit(1)
-	}
-	defer func() {
-		shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
-		defer cancel()
-		if err := tp.Shutdown(shutdownCtx); err != nil {
-			logger.Error("Failed to shutdown tracer provider", zap.Error(err))
+		tracingConfig := observability.TracingConfig{
+			ServiceName:      "reservation-worker",
+			ServiceVersion:   "1.0.0",
+			Environment:      "production", // TODO: make configurable
+			ExporterEndpoint: cfg.OTELExporterEndpoint,
 		}
-	}()
+
+		tp, err := observability.InitTracing(ctx, tracingConfig)
+		if err != nil {
+			logger.Error("Failed to initialize tracing", zap.Error(err))
+			os.Exit(1)
+		}
+		defer func() {
+			shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
+			defer cancel()
+			if err := tp.Shutdown(shutdownCtx); err != nil {
+				logger.Error("Failed to shutdown tracer provider", zap.Error(err))
+			}
+		}()
 	*/
 
 	// Initialize Prometheus metrics
 	metrics := observability.NewMetrics()
 
-	// Initialize AWS SDK with static credentials
+	// Initialize AWS SDK
 	awsOpts := []func(*config.LoadOptions) error{
 		config.WithRegion(cfg.SQSRegion),
 	}
 
-	// Use static credentials from environment variables
+	// Determine authentication method
 	accessKey := os.Getenv("AWS_ACCESS_KEY_ID")
 	secretKey := os.Getenv("AWS_SECRET_ACCESS_KEY")
 
 	if accessKey != "" && secretKey != "" {
+		// Method 1: Static credentials from environment variables
+		logger.Info("Using AWS static credentials from environment variables")
 		awsOpts = append(awsOpts, config.WithCredentialsProvider(
 			credentials.NewStaticCredentialsProvider(accessKey, secretKey, ""),
 		))
 	} else if cfg.AWSProfile != "" {
-		// Fallback to profile if static credentials not available
+		// Method 2: Named profile from ~/.aws/credentials
+		logger.Info("Using AWS profile", zap.String("profile", cfg.AWSProfile))
 		awsOpts = append(awsOpts, config.WithSharedConfigProfile(cfg.AWSProfile))
+	} else {
+		// Method 3: Default credential chain (IRSA, Instance Profile, etc.)
+		logger.Info("Using AWS default credential chain (IRSA/Instance Profile)")
 	}
 
 	awsCfg, err := config.LoadDefaultConfig(ctx, awsOpts...)

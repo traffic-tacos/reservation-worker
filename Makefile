@@ -145,6 +145,17 @@ docker-run: ## Run the application in Docker
 		--name $(BINARY_NAME) \
 		$(DOCKER_IMAGE):$(DOCKER_TAG)
 
+.PHONY: docker-run-with-aws
+docker-run-with-aws: ## Run the application in Docker with AWS credentials
+	@echo "$(YELLOW)Running Docker container with AWS credentials...$(NC)"
+	docker run --rm -p 8040:8040 -p 8041:8041 \
+		-v ~/.aws:/root/.aws:ro \
+		-e AWS_PROFILE=tacos \
+		-e AWS_REGION=ap-northeast-2 \
+		-e SQS_QUEUE_URL=https://sqs.ap-northeast-2.amazonaws.com/137406935518/traffic-tacos-reservation-events \
+		--name $(BINARY_NAME) \
+		$(DOCKER_IMAGE):$(DOCKER_TAG)
+
 .PHONY: grpcui
 grpcui: ## Launch grpcui for debugging (requires grpcui installed)
 	@echo "$(YELLOW)Launching grpcui for gRPC debugging...$(NC)"

@@ -41,7 +41,9 @@ type Config struct {
 func Load() *Config {
 	return &Config{
 		// AWS Configuration
-		AWSProfile:       getEnv("AWS_PROFILE", "tacos"),
+		// AWS_PROFILE: 빈 문자열 기본값 (EKS IRSA 자동 인증)
+		// 로컬 개발 시 .env.local에서 명시적으로 설정
+		AWSProfile:       getEnv("AWS_PROFILE", ""),
 		AWSRegion:        getEnv("AWS_REGION", "ap-northeast-2"),
 		UseSecretManager: getEnvBool("USE_SECRET_MANAGER", false),
 		SecretName:       getEnv("SECRET_NAME", "traffictacos/reservation-worker"),

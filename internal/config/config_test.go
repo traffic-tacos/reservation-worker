@@ -102,8 +102,9 @@ func TestLoadWithDefaults(t *testing.T) {
 	cfg := config.Load()
 
 	// Check default values
-	if cfg.AWSProfile != "tacos" {
-		t.Errorf("Expected default AWSProfile to be 'tacos', got '%s'", cfg.AWSProfile)
+	// AWS_PROFILE은 기본값이 빈 문자열 (IRSA 자동 인증)
+	if cfg.AWSProfile != "" {
+		t.Errorf("Expected default AWSProfile to be empty (IRSA), got '%s'", cfg.AWSProfile)
 	}
 
 	if cfg.AWSRegion != "ap-northeast-2" {
